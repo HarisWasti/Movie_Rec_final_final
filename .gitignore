@@ -1,1 +1,6 @@
+__pycache__/
+*.pyc
+*.npy
+*.npz
+data/df_train.csv
 

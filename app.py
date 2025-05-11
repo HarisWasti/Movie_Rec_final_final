@@ -9,6 +9,18 @@ from rec import (
     get_hybrid_recommendations
 )
 
+@st.cache_resource
+def load_df_train():
+    url = "https://drive.google.com/uc?id=1RS4_iGakDHUwfa0TA8d4QVdcZrW3GM17"
+    output_path = "data/df_train.csv"
+
+    if not os.path.exists(output_path):
+        gdown.download(url, output_path, quiet=False)
+
+    df_train = pd.read_csv(output_path)
+    return df_train
+
+df_train = load_df_train()
 
 st.set_page_config(page_title="Movie Recommender", layout="wide")
 st.title("Hybrid Movie Recommender")
@@ -25,14 +37,15 @@ st.subheader("Tell us what you like")
 all_titles = extra_values['title'].dropna().unique().tolist()
 selected_movie = st.selectbox("🎞 Pick a movie you enjoy", [""] + sorted(all_titles))
 
-selected_user = st.selectbox(" Pick a sample user", sorted(ease_user_map.keys()))
+# Use a default user, e.g., the first user in the mapping
+default_user = list(ease_user_map.keys())[0]
 
 # --- Recommend ---
 if selected_movie and st.button(" Get Recommendations"):
     tmdb_id = extra_values[extra_values['title'] == selected_movie]['tmdbId'].iloc[0]
 
     recs = get_hybrid_recommendations(
-        user_id=selected_user,
+        user_id=default_user,
         movie_id_cb=tmdb_id,
         extra_values=extra_values,
         cosine_sim=cosine_sim,

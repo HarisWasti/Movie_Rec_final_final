@@ -5,6 +5,7 @@ from sklearn.preprocessing import MinMaxScaler
 import streamlit as st
 import gdown
 import os
+import pickle
 
 @st.cache_data
 def load_embeddings_and_metadata():
@@ -23,12 +24,11 @@ def load_ease_model():
     B = np.load(path)['B']
     return B
 
-@st.cache_data
-def build_mappings(df_sample):
-    user_map = {uid: idx for idx, uid in enumerate(df_sample['userId'].unique())}
-    item_map = {mid: idx for idx, mid in enumerate(df_sample['movieId'].unique())}
-    idx2item = {v: k for k, v in item_map.items()}
-    return user_map, item_map, idx2item
+@st.cache_resource
+def load_ease_mappings():
+    with open("data/ease_mappings.pkl", "rb") as f:
+        maps = pickle.load(f)
+    return maps["user_map"], maps["item_map"], maps["idx2item"]
 
 @st.cache_resource
 def get_content_scores(movie_id_cb, cosine_sim, extra_values, indices):
@@ -40,8 +40,9 @@ def get_content_scores(movie_id_cb, cosine_sim, extra_values, indices):
     scaled = MinMaxScaler().fit_transform(np.array(scores).reshape(-1, 1)).flatten()
     return dict(zip(tmdb_ids, scaled))
 
-def get_hybrid_recommendations(user_id, movie_id_cb, df_sample, extra_values,
-                                cosine_sim, indices, ease_B, ease_user_map, ease_item_map, ease_idx2item,
+def get_hybrid_recommendations(user_id, movie_id_cb, extra_values,
+                                cosine_sim, indices, ease_B,
+                                ease_user_map, ease_item_map, ease_idx2item,
                                 weight_content=0.6, top_n=10):
     scores = {}
 
@@ -50,11 +51,10 @@ def get_hybrid_recommendations(user_id, movie_id_cb, df_sample, extra_values,
     for tmdb_id, score in content_scores.items():
         scores[tmdb_id] = weight_content * score
 
-    # Collaborative
+    # Collaborative (EASE)
     if user_id in ease_user_map:
         u_idx = ease_user_map[user_id]
-        user_interacted = df_sample[df_sample['userId'] == user_id]['movieId']
-        seen_idxs = [ease_item_map[mid] for mid in user_interacted if mid in ease_item_map]
+        seen_idxs = [ease_item_map[mid] for mid in extra_values[extra_values['movieId'].notnull()]['movieId'].unique() if mid in ease_item_map]
 
         x_u = np.zeros(len(ease_item_map))
         x_u[seen_idxs] = 1
@@ -66,7 +66,7 @@ def get_hybrid_recommendations(user_id, movie_id_cb, df_sample, extra_values,
 
         for idx, score in enumerate(scaled_preds):
             movie_id = ease_idx2item[idx]
-            tmdb_match = df_sample[df_sample['movieId'] == movie_id]['tmdbId']
+            tmdb_match = extra_values[extra_values['movieId'] == movie_id]['tmdbId']
             if not tmdb_match.empty:
                 tmdb_id = tmdb_match.iloc[0]
                 scores[tmdb_id] = scores.get(tmdb_id, 0) + (1 - weight_content) * score
@@ -74,3 +74,4 @@ def get_hybrid_recommendations(user_id, movie_id_cb, df_sample, extra_values,
     ranked = sorted(scores.items(), key=lambda x: x[1], reverse=True)
     top_tmdb = [tmdb for tmdb, _ in ranked[:top_n]]
     return extra_values[extra_values['tmdbId'].isin(top_tmdb)].drop_duplicates('tmdbId')
+

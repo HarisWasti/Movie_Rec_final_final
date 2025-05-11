@@ -1,0 +1,9 @@
+streamlit
+scikit-learn
+pandas
+numpy
+aiohttp
+nest_asyncio
+tqdm
+matplotlib
+seaborn

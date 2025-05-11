@@ -55,8 +55,11 @@ if selected_movie and st.button(" Get Recommendations"):
         ease_item_map=ease_item_map,
         ease_idx2item=ease_idx2item,
         weight_content=0.5,
-        top_n=9
+        top_n=15  # Increase in case we filter some out
     )
+
+    # Filter out the selected movie from the recommendations
+    recs = recs[recs['title'] != selected_movie].head(9)
 
     st.subheader(f" Recommendations for: {selected_movie}")
     cols = st.columns(3)

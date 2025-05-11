@@ -9,6 +9,7 @@ from rec import (
     get_hybrid_recommendations
 )
 
+df_train = load_df_train()
 
 @st.cache_resource
 def load_df_train():

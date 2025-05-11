@@ -9,6 +9,20 @@ from rec import (
     get_hybrid_recommendations
 )
 
+
+@st.cache_resource
+def load_df_train():
+    url = "https://drive.google.com/uc?id=1RS4_iGakDHUwfa0TA8d4QVdcZrW3GM17"
+    output_path = "data/df_train.csv"
+
+    if not os.path.exists(output_path):
+        gdown.download(url, output_path, quiet=False)
+
+    df_train = pd.read_csv(output_path)
+    return df_train
+
+
+
 st.set_page_config(page_title="Movie Recommender", layout="wide")
 st.title("Hybrid Movie Recommender")
 

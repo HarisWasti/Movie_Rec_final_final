@@ -10,7 +10,7 @@ from rec import (
 )
 
 st.set_page_config(page_title="Movie Recommender", layout="wide")
-st.title("🎬 Hybrid Movie Recommender (EASE + BERT)")
+st.title(" Hybrid Movie Recommender (EASE + BERT)")
 
 # --- Load Data ---
 st.info("Loading data and models...")
@@ -22,15 +22,15 @@ ease_user_map, ease_item_map, ease_idx2item = load_ease_mappings()
 st.subheader("Tell us what you like")
 
 all_titles = extra_values['title'].dropna().unique().tolist()
-selected_movie = st.selectbox("🎞️ Pick a movie you enjoy", [""] + sorted(all_titles))
+selected_movie = st.selectbox("🎞 Pick a movie you enjoy", [""] + sorted(all_titles))
 
 user_ids = sorted(extra_values['movieId'].map(ease_item_map).dropna().unique())
-selected_user = st.selectbox("👤 Pick a sample user", sorted(ease_user_map.keys()))
+selected_user = st.selectbox(" Pick a sample user", sorted(ease_user_map.keys()))
 
-weight = st.slider("🔄 Content vs Collaborative Weight", 0.0, 1.0, 0.6, 0.05)
+weight = st.slider(" Content vs Collaborative Weight", 0.0, 1.0, 0.6, 0.05)
 
 # --- Recommend ---
-if selected_movie and st.button("🎯 Get Recommendations"):
+if selected_movie and st.button(" Get Recommendations"):
     tmdb_id = extra_values[extra_values['title'] == selected_movie]['tmdbId'].iloc[0]
 
     recs = get_hybrid_recommendations(
@@ -47,7 +47,7 @@ if selected_movie and st.button("🎯 Get Recommendations"):
         top_n=10
     )
 
-    st.subheader(f"🎬 Recommendations for: {selected_movie}")
+    st.subheader(f" Recommendations for: {selected_movie}")
     cols = st.columns(3)
     for idx, (_, row) in enumerate(recs.iterrows()):
         col = cols[idx % 3]

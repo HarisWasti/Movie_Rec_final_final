@@ -9,8 +9,6 @@ from rec import (
     get_hybrid_recommendations
 )
 
-df_train = load_df_train()
-
 @st.cache_resource
 def load_df_train():
     url = "https://drive.google.com/uc?id=1RS4_iGakDHUwfa0TA8d4QVdcZrW3GM17"
@@ -21,6 +19,10 @@ def load_df_train():
 
     df_train = pd.read_csv(output_path)
     return df_train
+
+
+df_train = load_df_train()
+
 
 
 

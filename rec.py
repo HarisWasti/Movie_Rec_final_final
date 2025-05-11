@@ -1,58 +1,86 @@
+import pandas as pd
 import numpy as np
+from sentence_transformers import SentenceTransformer
 from sklearn.metrics.pairwise import cosine_similarity
-from sklearn.neighbors import NearestNeighbors
+from sklearn.preprocessing import MinMaxScaler
+import os
+import streamlit as st
 
-# Helper to safely search for movie
-def search_movie(title_input, movie_meta):
-    title_input = title_input.lower()
-    match = movie_meta[movie_meta['title'].str.lower().str.contains(title_input, regex=False)]
-    return match['title'].iloc[0] if not match.empty else None
+@st.cache_data
+def load_embeddings_and_metadata():
+    extra_values = pd.read_csv("data/extra_values.csv")
+    embeddings = np.load("data/embeddings.npy")
 
-# Hybrid recommendation function
-def hybrid_recommendations(title_input, movie_meta, tfidf_matrix, item_movie_matrix, user_movie_ratings, knn, alpha=0.6, penalty_weight=0.2, top_k=9):
-    title = search_movie(title_input, movie_meta)
-    if not title:
-        return ["Movie title not found."]
+    cosine_sim = cosine_similarity(embeddings)
+    indices = pd.Series(extra_values.index, index=extra_values['tmdbId']).drop_duplicates()
 
-    idx = movie_meta[movie_meta['title'] == title].index[0]
-    movie_id = movie_meta.loc[idx, 'movieId']
+    return extra_values, embeddings, cosine_sim, indices
 
-    # ---- Content-based similarity ----
-    content_sim = cosine_similarity(tfidf_matrix[idx], tfidf_matrix).flatten()
+@st.cache_resource
+def load_and_train_ease(df_train, lambda_=300.0):
+    user_map = {uid: idx for idx, uid in enumerate(df_train['userId'].unique())}
+    item_map = {mid: idx for idx, mid in enumerate(df_train['movieId'].unique())}
+    idx2item = {v: k for k, v in item_map.items()}
 
-    # ---- Collaborative filtering similarity ----
-    try:
-        movie_idx_cf = user_movie_ratings.columns.get_loc(movie_id)
-    except KeyError:
-        return ["Not enough data for collaborative filtering."]
+    rows = df_train['userId'].map(user_map)
+    cols = df_train['movieId'].map(item_map)
+    data = np.ones(len(df_train))
 
-    movie_vector = item_movie_matrix[movie_idx_cf].reshape(1, -1)
-    distances, indices_cf = knn.kneighbors(movie_vector, n_neighbors=11)  # include self
+    X = np.zeros((len(user_map), len(item_map)))
+    X[rows, cols] = 1
 
-    cf_scores = np.zeros_like(content_sim)
-    for i, cf_idx in enumerate(indices_cf.flatten()[1:]):  # skip self
-        sim = 1 - distances.flatten()[i + 1]  # convert distance to similarity
-        cf_scores[cf_idx] = sim
+    G = X.T @ X
+    np.fill_diagonal(G, G.diagonal() + lambda_)
+    P = np.linalg.inv(G)
+    B = P / (-np.diag(P)[:, None])
+    np.fill_diagonal(B, 0)
 
-    # ---- Normalize scores ----
-    content_sim /= content_sim.max() if content_sim.max() != 0 else 1
-    cf_scores /= cf_scores.max() if cf_scores.max() != 0 else 1
+    return B.astype(np.float32), user_map, item_map, idx2item
 
-    # ---- Hybrid blending ----
-    hybrid_score = alpha * cf_scores + (1 - alpha) * content_sim
+@st.cache_resource
+def get_content_scores(movie_id_cb, cosine_sim, extra_values, indices):
+    if movie_id_cb not in indices:
+        return {}
+    idx = indices[movie_id_cb]
+    scores = cosine_sim[idx]
+    tmdb_ids = extra_values['tmdbId'].tolist()
+    scaled = MinMaxScaler().fit_transform(np.array(scores).reshape(-1, 1)).flatten()
+    return dict(zip(tmdb_ids, scaled))
 
-    # ---- Penalize popularity ----
-    if 'rating' in movie_meta.columns:
-        popularity = movie_meta['rating'].fillna(0).values
-        popularity = (popularity - popularity.min()) / (popularity.max() - popularity.min())
-        hybrid_score -= penalty_weight * popularity
+def get_hybrid_recommendations(user_id, movie_id_cb, df_train, extra_values, cosine_sim,
+                                indices, ease_B, ease_user_map, ease_item_map, ease_idx2item,
+                                weight_content=0.6, top_n=10):
+    scores = {}
 
-    # ---- Exclude original movie ----
-    hybrid_score[idx] = -1
+    # Content-based component
+    content_scores = get_content_scores(movie_id_cb, cosine_sim, extra_values, indices)
+    for tmdb_id, score in content_scores.items():
+        scores[tmdb_id] = weight_content * score
 
-    # ---- Get top recommendations ----
-    top_indices = hybrid_score.argsort()[::-1][:top_k]
-    return movie_meta['title'].iloc[top_indices].tolist()
+    # Collaborative component (EASE)
+    if user_id in ease_user_map:
+        u_idx = ease_user_map[user_id]
+        user_interacted = df_train[df_train['userId'] == user_id]['movieId']
+        seen_idxs = [ease_item_map[mid] for mid in user_interacted if mid in ease_item_map]
 
+        x_u = np.zeros(len(ease_item_map))
+        x_u[seen_idxs] = 1
 
+        preds = x_u @ ease_B
+        scaled_preds = MinMaxScaler().fit_transform(preds.reshape(-1, 1)).flatten()
+
+        for idx in seen_idxs:
+            scaled_preds[idx] = 0.0
+
+        for idx, score in enumerate(scaled_preds):
+            movie_id = ease_idx2item[idx]
+            tmdb_match = df_train[df_train['movieId'] == movie_id]['tmdbId']
+            if not tmdb_match.empty:
+                tmdb_id = tmdb_match.iloc[0]
+                scores[tmdb_id] = scores.get(tmdb_id, 0) + (1 - weight_content) * score
+
+    ranked = sorted(scores.items(), key=lambda x: x[1], reverse=True)
+    top_tmdb = [tmdb for tmdb, _ in ranked[:top_n]]
+
+    return extra_values[extra_values['tmdbId'].isin(top_tmdb)].drop_duplicates('tmdbId')
 

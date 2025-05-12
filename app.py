@@ -133,14 +133,23 @@ if st.session_state.page == 'user_recs':
 if st.session_state.page == 'cold_start':
     st.info("Tell us what you like and we'll personalize suggestions")
     all_titles = extra_values['title'].dropna().unique().tolist()
-    selected_movies = st.multiselect("Pick 5 movies you like", sorted(all_titles))
-    genres_list = extra_values['genres'].dropna().str.split('|').explode().str.strip().unique().tolist()
-    selected_genres = st.multiselect("Pick 3 genres you enjoy", sorted(genres_list))
+    selected_movies = st.multiselect(" Pick movies you like (min 1)", sorted(all_titles))
+    
+    genres_list = (
+        extra_values['genres'].dropna()
+        .str.split('|').explode().str.strip().unique().tolist()
+    )
+    selected_genres = st.multiselect(" Pick 3 genres you enjoy", sorted(genres_list))
 
     if st.button("Recommend"):
-        if len(selected_movies) >= 5 and len(selected_genres) >= 3:
-            liked_tmdb_ids = extra_values[extra_values['title'].isin(selected_movies)]['tmdbId'].tolist()
-            liked_indices = [tfidf_index.get(tmdb) for tmdb in liked_tmdb_ids if tmdb in tfidf_index]
+        if len(selected_movies) >= 1 and len(selected_genres) >= 3:
+            liked_tmdb_ids = extra_values[
+                extra_values['title'].isin(selected_movies)
+            ]['tmdbId'].tolist()
+
+            liked_indices = [
+                tfidf_index.get(tmdb) for tmdb in liked_tmdb_ids if tmdb in tfidf_index
+            ]
 
             tfidf_sim = np.zeros(tfidf_matrix.shape[0])
             for idx in liked_indices:
@@ -150,13 +159,15 @@ if st.session_state.page == 'cold_start':
             if liked_indices:
                 tfidf_sim /= len(liked_indices)
 
+            # Score adjustment based on genre overlap
             extra_values['genre_match'] = extra_values['genres'].apply(
                 lambda g: any(genre in g.split('|') for genre in selected_genres)
             )
-            extra_values['content_score'] = tfidf_sim + extra_values['genre_match'] * 0.1 * tfidf_sim
+            extra_values['content_score'] = tfidf_sim + extra_values['genre_match'] * tfidf_sim * 0.1
 
+            # Filter out selected movies from recommendations
             filtered = extra_values[
-                ~extra_values['tmdbId'].isin(liked_tmdb_ids) 
+                ~extra_values['tmdbId'].isin(liked_tmdb_ids)
             ].sort_values('content_score', ascending=False).drop_duplicates('tmdbId')
 
             st.subheader(" Top 9 Personalized Picks")
@@ -167,5 +178,8 @@ if st.session_state.page == 'cold_start':
                         st.image(row['poster_url'], use_container_width=True)
                     st.markdown(f"**{row['title']}**")
                     st.caption(f"{row['genres']} | {row['director']}")
+        else:
+            st.warning("Please select at least 1 movie and 3 genres.")
+
     if st.button(" Start Over"):
         reset()

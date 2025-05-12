@@ -7,7 +7,9 @@ import joblib
 import scipy.sparse as sp
 from sklearn.metrics.pairwise import cosine_similarity
 from sklearn.preprocessing import MinMaxScaler
-from rec import load_assets, get_hybrid_recommendations
+
+# --- MUST BE FIRST ---
+st.set_page_config(page_title="Movie Recommender", layout="wide")
 
 # --- Load resources ---
 @st.cache_resource
@@ -66,7 +68,6 @@ def get_hybrid_recommendations(user_id, top_n=9, weight_content=0.6):
     return extra_values[extra_values['tmdbId'].isin(top_tmdb)].drop_duplicates('tmdbId')
 
 # --- Streamlit UI ---
-st.set_page_config(page_title="Movie Recommender", layout="wide")
 st.title(" Hybrid Movie Recommender")
 
 # --- Session state for navigation ---
@@ -139,5 +140,5 @@ if st.session_state.page == 'cold_start':
                         st.image(row['poster_url'], use_container_width=True)
                     st.markdown(f"**{row['title']}**")
                     st.caption(f"{row['genres']} | {row['director']}")
-    if st.button(" Start Over"):
+    if st.button("⬅️ Start Over"):
         reset()

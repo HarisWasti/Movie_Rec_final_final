@@ -131,15 +131,24 @@ if st.session_state.page == 'user_recs':
 
 # --- Cold Start Page ---
 if st.session_state.page == 'cold_start':
-    st.info("Tell us what you like and we'll personalize suggestions")
-    all_titles = extra_values['title'].dropna().unique().tolist()
-    selected_movies = st.multiselect(" Pick movies you like (min 1)", sorted(all_titles))
+    st.info("Tell us what you like and we'll personalize suggestions.")
     
-    genres_list = (
-        extra_values['genres'].dropna()
-        .str.split('|').explode().str.strip().unique().tolist()
+    all_titles = extra_values['title'].dropna().unique().tolist()
+    selected_movies = st.multiselect(
+        " Pick at least 1 movie you like (no limit on max):",
+        sorted(all_titles)
     )
-    selected_genres = st.multiselect(" Pick 3 genres you enjoy", sorted(genres_list))
+
+    genres_list = (
+        extra_values['genres']
+        .dropna()
+        .str.split('|')
+        .explode()
+        .str.strip()
+        .unique()
+        .tolist()
+    )
+    selected_genres = st.multiselect(" Pick 3 genres you enjoy:", sorted(genres_list))
 
     if st.button("Recommend"):
         if len(selected_movies) >= 1 and len(selected_genres) >= 3:
@@ -159,13 +168,13 @@ if st.session_state.page == 'cold_start':
             if liked_indices:
                 tfidf_sim /= len(liked_indices)
 
-            # Score adjustment based on genre overlap
+            # Genre boosting
             extra_values['genre_match'] = extra_values['genres'].apply(
                 lambda g: any(genre in g.split('|') for genre in selected_genres)
             )
             extra_values['content_score'] = tfidf_sim + extra_values['genre_match'] * tfidf_sim * 0.1
 
-            # Filter out selected movies from recommendations
+            # Remove already selected movies from recommendations
             filtered = extra_values[
                 ~extra_values['tmdbId'].isin(liked_tmdb_ids)
             ].sort_values('content_score', ascending=False).drop_duplicates('tmdbId')
@@ -181,5 +190,5 @@ if st.session_state.page == 'cold_start':
         else:
             st.warning("Please select at least 1 movie and 3 genres.")
 
-    if st.button(" Start Over"):
+    if st.button("⬅ Start Over"):
         reset()

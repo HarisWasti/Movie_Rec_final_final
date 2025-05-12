@@ -82,7 +82,9 @@ if st.session_state.page == 'start':
     mode = st.radio("Do you have a user ID?", ["Yes", "No"])
 
     if mode == "Yes":
-        user_id_input = st.text_input("Enter your User ID:")
+        user_ids = sorted(ease_user_map.keys())
+        user_id_input = st.selectbox("Select your User ID:", user_ids)
+
         if st.button("Get Recommendations") and user_id_input.isdigit():
             user_id = int(user_id_input)
             if user_id in ease_user_map:
@@ -114,7 +116,7 @@ if st.session_state.page == 'cold_start':
     st.info("Tell us what you like and we'll personalize suggestions")
     all_titles = extra_values['title'].dropna().unique().tolist()
     selected_movies = st.multiselect("Pick 5 movies you like", sorted(all_titles))
-    genres_list = extra_values['genres'].dropna().str.split().explode().unique().tolist()
+    genres_list = extra_values['genres'].dropna().str.split('|').explode().str.strip().unique().tolist()
     selected_genres = st.multiselect("Pick 3 genres you enjoy", sorted(genres_list))
 
     if st.button("Recommend"):

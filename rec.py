@@ -1,75 +1,72 @@
 import pandas as pd
 import numpy as np
+import os
+import joblib
+import scipy.sparse as sp
 from sklearn.metrics.pairwise import cosine_similarity
 from sklearn.preprocessing import MinMaxScaler
-import streamlit as st
-import gdown
-import os
-import pickle
 
-@st.cache_data
-def load_embeddings_and_metadata():
-    extra_values = pd.read_csv("data/extra_values.csv")
-    embeddings = np.load("data/embeddings.npy")
-    cosine_sim = cosine_similarity(embeddings)
-    indices = pd.Series(extra_values.index, index=extra_values['tmdbId']).drop_duplicates()
-    return extra_values, embeddings, cosine_sim, indices
+def load_assets(data_dir="data"):
+    df = pd.read_csv(os.path.join(data_dir, "extra_values_filtered.csv"))
+    tfidf_vectorizer = joblib.load(os.path.join(data_dir, "tfidf_vectorizer.pkl"))
+    tfidf_matrix = sp.load_npz(os.path.join(data_dir, "tfidf_matrix.npz"))
+    tfidf_index = joblib.load(os.path.join(data_dir, "tfidf_index.pkl"))
+    ease_B = joblib.load(os.path.join(data_dir, "ease_B.pkl"))
+    ease_user_map = joblib.load(os.path.join(data_dir, "ease_user_map.pkl"))
+    ease_item_map = joblib.load(os.path.join(data_dir, "ease_item_map.pkl"))
+    ease_idx2item = joblib.load(os.path.join(data_dir, "ease_idx2item.pkl"))
+    movieId_to_tmdbId = joblib.load(os.path.join(data_dir, "movieId_to_tmdbId.pkl"))
 
-@st.cache_resource
-def load_ease_model():
-    path = "data/ease_model.npz"
-    url = "https://drive.google.com/uc?id=1aW5R9E2Ah7nI08el8nqp5zJTRuZu-F5o"
-    if not os.path.exists(path):
-        gdown.download(url, path, quiet=False)
-    B = np.load(path)['B']
-    return B
+    return (
+        df, tfidf_vectorizer, tfidf_matrix, tfidf_index,
+        ease_B, ease_user_map, ease_item_map, ease_idx2item, movieId_to_tmdbId
+    )
 
-@st.cache_resource
-def load_ease_mappings():
-    with open("data/ease_mappings.pkl", "rb") as f:
-        maps = pickle.load(f)
-    return maps["user_map"], maps["item_map"], maps["idx2item"]
 
-@st.cache_resource
-def get_content_scores(movie_id_cb, cosine_sim, extra_values, indices):
-    if movie_id_cb not in indices:
-        return {}
-    idx = indices[movie_id_cb]
-    scores = cosine_sim[idx]
-    tmdb_ids = extra_values['tmdbId'].tolist()
-    scaled = MinMaxScaler().fit_transform(np.array(scores).reshape(-1, 1)).flatten()
-    return dict(zip(tmdb_ids, scaled))
-
-def get_hybrid_recommendations(user_id, movie_id_cb, extra_values,
-                                cosine_sim, indices, ease_B,
-                                ease_user_map, ease_item_map, ease_idx2item,
-                                weight_content=0.6, top_n=10):
+def get_hybrid_recommendations(
+    user_id, extra_values, tfidf_matrix, tfidf_index,
+    ease_B, ease_user_map, ease_item_map, ease_idx2item, movieId_to_tmdbId,
+    top_n=9, weight_content=0.6
+):
     scores = {}
 
-    # Content-based
-    content_scores = get_content_scores(movie_id_cb, cosine_sim, extra_values, indices)
-    for tmdb_id, score in content_scores.items():
-        scores[tmdb_id] = weight_content * score
-
-    # Collaborative (EASE)
     if user_id in ease_user_map:
         u_idx = ease_user_map[user_id]
-        seen_idxs = [ease_item_map[mid] for mid in extra_values[extra_values['movieId'].notnull()]['movieId'].unique() if mid in ease_item_map]
+        seen_movies = extra_values[extra_values['userId'] == user_id]['movieId']
 
-        x_u = np.zeros(len(ease_item_map))
-        x_u[seen_idxs] = 1
-        preds = x_u @ ease_B
-        scaled_preds = MinMaxScaler().fit_transform(preds.reshape(-1, 1)).flatten()
+        ease_scores = np.dot(
+            seen_movies.map(ease_item_map).dropna().apply(
+                lambda x: ease_B[x].toarray() if sp.issparse(ease_B) else ease_B[x]
+            ).sum(axis=0),
+            1
+        )
+        ease_scores = MinMaxScaler().fit_transform(ease_scores.reshape(1, -1)).flatten()
 
-        for idx in seen_idxs:
-            scaled_preds[idx] = 0.0
+        for mid in seen_movies:
+            if mid in ease_item_map:
+                ease_scores[ease_item_map[mid]] = 0.0
 
-        for idx, score in enumerate(scaled_preds):
+        for idx, score in enumerate(ease_scores):
             movie_id = ease_idx2item[idx]
-            tmdb_match = extra_values[extra_values['movieId'] == movie_id]['tmdbId']
-            if not tmdb_match.empty:
-                tmdb_id = tmdb_match.iloc[0]
-                scores[tmdb_id] = scores.get(tmdb_id, 0) + (1 - weight_content) * score
+            tmdb_id = movieId_to_tmdbId.get(movie_id)
+            if tmdb_id:
+                scores[tmdb_id] = (1 - weight_content) * score
+
+    liked_tmdb_ids = extra_values[
+        (extra_values['userId'] == user_id) & (extra_values['rating'] >= 4.0)
+    ]['tmdbId']
+    liked_indices = [tfidf_index.get(tmdb_id) for tmdb_id in liked_tmdb_ids if tmdb_id in tfidf_index]
+
+    tfidf_sim = np.zeros(tfidf_matrix.shape[0])
+    for idx in liked_indices:
+        if idx is not None:
+            tfidf_sim += cosine_similarity(tfidf_matrix[idx], tfidf_matrix).flatten()
+
+    if liked_indices:
+        tfidf_sim /= len(liked_indices)
+        for idx, score in enumerate(tfidf_sim):
+            tmdb_id = extra_values.iloc[idx]['tmdbId']
+            scores[tmdb_id] = scores.get(tmdb_id, 0) + weight_content * score
 
     ranked = sorted(scores.items(), key=lambda x: x[1], reverse=True)
     top_tmdb = [tmdb for tmdb, _ in ranked[:top_n]]

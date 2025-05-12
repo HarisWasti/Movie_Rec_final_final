@@ -98,7 +98,19 @@ if st.session_state.page == 'start':
 # --- Existing User Rec Page ---
 if st.session_state.page == 'user_recs':
     user_id = st.session_state.user_id
-    recs = get_hybrid_recommendations(user_id)
+    recs = get_hybrid_recommendations(
+    user_id,
+    ratings_df=df_small,
+    extra_values=extra_values,
+    tfidf_matrix=tfidf_matrix,
+    tfidf_index=tfidf_index,
+    ease_B=ease_B,
+    ease_user_map=ease_user_map,
+    ease_item_map=ease_item_map,
+    ease_idx2item=ease_idx2item,
+    movieId_to_tmdbId=movieId_to_tmdbId
+)
+
     st.subheader(f"Top 9 Recommendations for User {user_id}")
     cols = st.columns(3)
     for i, (_, row) in enumerate(recs.iterrows()):
@@ -144,5 +156,5 @@ if st.session_state.page == 'cold_start':
                         st.image(row['poster_url'], use_container_width=True)
                     st.markdown(f"**{row['title']}**")
                     st.caption(f"{row['genres']} | {row['director']}")
-    if st.button("⬅️ Start Over"):
+    if st.button(" Start Over"):
         reset()

@@ -190,5 +190,5 @@ if st.session_state.page == 'cold_start':
         else:
             st.warning("Please select at least 1 movie and 3 genres.")
 
-    if st.button("⬅ Start Over"):
+    if st.button(" Start Over"):
         reset()

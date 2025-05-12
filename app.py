@@ -1,72 +1,120 @@
+# streamlit_app.py
 import streamlit as st
 import pandas as pd
+import numpy as np
 import os
-import gdown
-from rec import (
-    load_embeddings_and_metadata,
-    load_ease_model,
-    load_ease_mappings,
-    get_hybrid_recommendations
-)
+import joblib
+import scipy.sparse as sp
+from sklearn.metrics.pairwise import cosine_similarity
+from sklearn.preprocessing import MinMaxScaler
 
+# --- Load resources ---
 @st.cache_resource
-def load_df_train():
-    url = "https://drive.google.com/uc?id=1RS4_iGakDHUwfa0TA8d4QVdcZrW3GM17"
-    output_path = "data/df_train.csv"
+def load_assets():
+    data_dir = "data"
+    df = pd.read_csv(os.path.join(data_dir, "extra_values_filtered.csv"))
+    tfidf_vectorizer = joblib.load(os.path.join(data_dir, "tfidf_vectorizer.pkl"))
+    tfidf_matrix = sp.load_npz(os.path.join(data_dir, "tfidf_matrix.npz"))
+    tfidf_index = joblib.load(os.path.join(data_dir, "tfidf_index.pkl"))
+    ease_B = joblib.load(os.path.join(data_dir, "ease_B.pkl"))
+    ease_user_map = joblib.load(os.path.join(data_dir, "ease_user_map.pkl"))
+    ease_item_map = joblib.load(os.path.join(data_dir, "ease_item_map.pkl"))
+    ease_idx2item = joblib.load(os.path.join(data_dir, "ease_idx2item.pkl"))
+    movieId_to_tmdbId = joblib.load(os.path.join(data_dir, "movieId_to_tmdbId.pkl"))
+    return df, tfidf_vectorizer, tfidf_matrix, tfidf_index, ease_B, ease_user_map, ease_item_map, ease_idx2item, movieId_to_tmdbId
 
-    if not os.path.exists(output_path):
-        gdown.download(url, output_path, quiet=False)
+extra_values, tfidf_vectorizer, tfidf_matrix, tfidf_index, ease_B, ease_user_map, ease_item_map, ease_idx2item, movieId_to_tmdbId = load_assets()
 
-    df_train = pd.read_csv(output_path)
-    return df_train
+# --- Hybrid Recommendation ---
+def get_hybrid_recommendations(user_id, top_n=9, weight_content=0.6):
+    scores = {}
 
-df_train = load_df_train()
+    if user_id in ease_user_map:
+        u_idx = ease_user_map[user_id]
+        seen_movies = extra_values[extra_values['userId'] == user_id]['movieId']
 
+        ease_scores = np.dot((seen_movies.map(ease_item_map).dropna().apply(lambda x: ease_B[x].toarray() if sp.issparse(ease_B) else ease_B[x]).sum(axis=0)), 1)
+        ease_scores = MinMaxScaler().fit_transform(ease_scores.reshape(1, -1)).flatten()
+
+        for mid in seen_movies:
+            if mid in ease_item_map:
+                ease_scores[ease_item_map[mid]] = 0.0
+
+        for idx, score in enumerate(ease_scores):
+            movie_id = ease_idx2item[idx]
+            tmdb_id = movieId_to_tmdbId.get(movie_id)
+            if tmdb_id:
+                scores[tmdb_id] = (1 - weight_content) * score
+
+    liked_tmdb_ids = extra_values[(extra_values['userId'] == user_id) & (extra_values['rating'] >= 4.0)]['tmdbId']
+    liked_indices = [tfidf_index.get(tmdb_id) for tmdb_id in liked_tmdb_ids if tmdb_id in tfidf_index]
+
+    tfidf_sim = np.zeros(tfidf_matrix.shape[0])
+    for idx in liked_indices:
+        if idx is not None:
+            tfidf_sim += cosine_similarity(tfidf_matrix[idx], tfidf_matrix).flatten()
+
+    if liked_indices:
+        tfidf_sim /= len(liked_indices)
+        for idx, score in enumerate(tfidf_sim):
+            tmdb_id = extra_values.iloc[idx]['tmdbId']
+            scores[tmdb_id] = scores.get(tmdb_id, 0) + weight_content * score
+
+    ranked = sorted(scores.items(), key=lambda x: x[1], reverse=True)
+    top_tmdb = [tmdb for tmdb, _ in ranked[:top_n]]
+    return extra_values[extra_values['tmdbId'].isin(top_tmdb)].drop_duplicates('tmdbId')
+
+# --- Streamlit UI ---
 st.set_page_config(page_title="Movie Recommender", layout="wide")
-st.title("Hybrid Movie Recommender")
+st.title("🎬 Hybrid Movie Recommender")
 
-# --- Load Data ---
-st.info("Loading data and models...")
-extra_values, embeddings, cosine_sim, indices = load_embeddings_and_metadata()
-ease_B = load_ease_model()
-ease_user_map, ease_item_map, ease_idx2item = load_ease_mappings()
+# --- User Choice ---
+mode = st.radio("Do you have a user ID?", ["Yes", "No"])
 
-# --- UI Controls ---
-st.subheader("Tell us what you like")
+if mode == "Yes":
+    user_id_input = st.text_input("Enter your User ID:")
+    if st.button("Get Recommendations") and user_id_input.isdigit():
+        user_id = int(user_id_input)
+        if user_id in ease_user_map:
+            recs = get_hybrid_recommendations(user_id)
+            st.subheader(f"Top 9 Recommendations for User {user_id}")
+            cols = st.columns(3)
+            for i, (_, row) in enumerate(recs.iterrows()):
+                with cols[i % 3]:
+                    st.markdown(f"**{row['title']}**")
+                    st.caption(f"{row['genres']} | {row['director']}")
+        else:
+            st.warning("❌ Invalid User ID")
 
-all_titles = extra_values['title'].dropna().unique().tolist()
-selected_movie = st.selectbox("🎞 Pick a movie you enjoy", [""] + sorted(all_titles))
+elif mode == "No":
+    st.info("Tell us what you like and we'll personalize suggestions")
+    all_titles = extra_values['title'].dropna().unique().tolist()
+    selected_movies = st.multiselect("Pick 5 movies you like", sorted(all_titles))
+    genres_list = extra_values['genres'].dropna().str.split().explode().unique().tolist()
+    selected_genres = st.multiselect("Pick 3 genres you enjoy", sorted(genres_list))
 
-# Use a default user, e.g., the first user in the mapping
-default_user = list(ease_user_map.keys())[0]
+    if st.button("Recommend"):
+        if len(selected_movies) >= 5 and len(selected_genres) >= 3:
+            temp_user_id = 999999
+            liked_tmdb_ids = extra_values[extra_values['title'].isin(selected_movies)]['tmdbId'].tolist()
+            liked_indices = [tfidf_index.get(tmdb) for tmdb in liked_tmdb_ids if tmdb in tfidf_index]
 
-# --- Recommend ---
-if selected_movie and st.button(" Get Recommendations"):
-    tmdb_id = extra_values[extra_values['title'] == selected_movie]['tmdbId'].iloc[0]
+            tfidf_sim = np.zeros(tfidf_matrix.shape[0])
+            for idx in liked_indices:
+                if idx is not None:
+                    tfidf_sim += cosine_similarity(tfidf_matrix[idx], tfidf_matrix).flatten()
 
-    recs = get_hybrid_recommendations(
-        user_id=default_user,
-        movie_id_cb=tmdb_id,
-        extra_values=extra_values,
-        cosine_sim=cosine_sim,
-        indices=indices,
-        ease_B=ease_B,
-        ease_user_map=ease_user_map,
-        ease_item_map=ease_item_map,
-        ease_idx2item=ease_idx2item,
-        weight_content=0.5,
-        top_n=15  # Increase in case we filter some out
-    )
+            if liked_indices:
+                tfidf_sim /= len(liked_indices)
+            genre_mask = extra_values['genres'].apply(lambda g: any(genre in g for genre in selected_genres))
+            extra_values['content_score'] = tfidf_sim
+            filtered = extra_values[genre_mask].sort_values('content_score', ascending=False).drop_duplicates('tmdbId')
+            st.subheader("🎯 Top 9 Personalized Picks")
+            cols = st.columns(3)
+            for i, (_, row) in enumerate(filtered.head(9).iterrows()):
+                with cols[i % 3]:
+                    st.markdown(f"**{row['title']}**")
+                    st.caption(f"{row['genres']} | {row['director']}")
+        else:
+            st.warning("Please select at least 5 movies and 3 genres.")
 
-    # Filter out the selected movie from the recommendations
-    recs = recs[recs['title'] != selected_movie].head(9)
-
-    st.subheader(f" Recommendations for: {selected_movie}")
-    cols = st.columns(3)
-    for idx, (_, row) in enumerate(recs.iterrows()):
-        col = cols[idx % 3]
-        with col:
-            if isinstance(row['poster_url'], str) and row['poster_url'].startswith('http'):
-                st.image(row['poster_url'], use_container_width=True)
-            st.markdown(f"**{row['title']}**")
-            st.caption(f"{row['genres']} | {row['director']} | {row.get('actor1', '')}")

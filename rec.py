@@ -24,7 +24,7 @@ def load_assets(data_dir="data"):
 
 
 def get_hybrid_recommendations(
-    user_id, extra_values, tfidf_matrix, tfidf_index,
+    user_id, ratings_df, extra_values, tfidf_matrix, tfidf_index,
     ease_B, ease_user_map, ease_item_map, ease_idx2item, movieId_to_tmdbId,
     top_n=9, weight_content=0.6
 ):
@@ -32,7 +32,7 @@ def get_hybrid_recommendations(
 
     if user_id in ease_user_map:
         u_idx = ease_user_map[user_id]
-        seen_movies = extra_values[extra_values['userId'] == user_id]['movieId']
+        seen_movies = ratings_df[ratings_df['userId'] == user_id]['movieId']
 
         ease_scores = np.dot(
             seen_movies.map(ease_item_map).dropna().apply(
@@ -52,8 +52,8 @@ def get_hybrid_recommendations(
             if tmdb_id:
                 scores[tmdb_id] = (1 - weight_content) * score
 
-    liked_tmdb_ids = extra_values[
-        (extra_values['userId'] == user_id) & (extra_values['rating'] >= 4.0)
+    liked_tmdb_ids = ratings_df[
+        (ratings_df['userId'] == user_id) & (ratings_df['rating'] >= 4.0)
     ]['tmdbId']
     liked_indices = [tfidf_index.get(tmdb_id) for tmdb_id in liked_tmdb_ids if tmdb_id in tfidf_index]
 

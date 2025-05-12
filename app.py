@@ -66,27 +66,49 @@ def get_hybrid_recommendations(user_id, top_n=9, weight_content=0.6):
 
 # --- Streamlit UI ---
 st.set_page_config(page_title="Movie Recommender", layout="wide")
-st.title("🎬 Hybrid Movie Recommender")
+st.title(" Hybrid Movie Recommender")
+
+# --- Session state for navigation ---
+if 'page' not in st.session_state:
+    st.session_state.page = 'start'
+
+def reset():
+    st.session_state.page = 'start'
 
 # --- User Choice ---
-mode = st.radio("Do you have a user ID?", ["Yes", "No"])
+if st.session_state.page == 'start':
+    mode = st.radio("Do you have a user ID?", ["Yes", "No"])
 
-if mode == "Yes":
-    user_id_input = st.text_input("Enter your User ID:")
-    if st.button("Get Recommendations") and user_id_input.isdigit():
-        user_id = int(user_id_input)
-        if user_id in ease_user_map:
-            recs = get_hybrid_recommendations(user_id)
-            st.subheader(f"Top 9 Recommendations for User {user_id}")
-            cols = st.columns(3)
-            for i, (_, row) in enumerate(recs.iterrows()):
-                with cols[i % 3]:
-                    st.markdown(f"**{row['title']}**")
-                    st.caption(f"{row['genres']} | {row['director']}")
-        else:
-            st.warning("❌ Invalid User ID")
+    if mode == "Yes":
+        user_id_input = st.text_input("Enter your User ID:")
+        if st.button("Get Recommendations") and user_id_input.isdigit():
+            user_id = int(user_id_input)
+            if user_id in ease_user_map:
+                st.session_state.page = 'user_recs'
+                st.session_state.user_id = user_id
+            else:
+                st.warning(" Invalid User ID")
 
-elif mode == "No":
+    elif mode == "No":
+        st.session_state.page = 'cold_start'
+
+# --- Existing User Rec Page ---
+if st.session_state.page == 'user_recs':
+    user_id = st.session_state.user_id
+    recs = get_hybrid_recommendations(user_id)
+    st.subheader(f"Top 9 Recommendations for User {user_id}")
+    cols = st.columns(3)
+    for i, (_, row) in enumerate(recs.iterrows()):
+        with cols[i % 3]:
+            if isinstance(row.get('poster_url'), str) and row['poster_url'].startswith('http'):
+                st.image(row['poster_url'], use_container_width=True)
+            st.markdown(f"**{row['title']}**")
+            st.caption(f"{row['genres']} | {row['director']}")
+    if st.button(" Go Back"):
+        reset()
+
+# --- Cold Start Page ---
+if st.session_state.page == 'cold_start':
     st.info("Tell us what you like and we'll personalize suggestions")
     all_titles = extra_values['title'].dropna().unique().tolist()
     selected_movies = st.multiselect("Pick 5 movies you like", sorted(all_titles))
@@ -95,7 +117,6 @@ elif mode == "No":
 
     if st.button("Recommend"):
         if len(selected_movies) >= 5 and len(selected_genres) >= 3:
-            temp_user_id = 999999
             liked_tmdb_ids = extra_values[extra_values['title'].isin(selected_movies)]['tmdbId'].tolist()
             liked_indices = [tfidf_index.get(tmdb) for tmdb in liked_tmdb_ids if tmdb in tfidf_index]
 
@@ -109,12 +130,13 @@ elif mode == "No":
             genre_mask = extra_values['genres'].apply(lambda g: any(genre in g for genre in selected_genres))
             extra_values['content_score'] = tfidf_sim
             filtered = extra_values[genre_mask].sort_values('content_score', ascending=False).drop_duplicates('tmdbId')
-            st.subheader("🎯 Top 9 Personalized Picks")
+            st.subheader(" Top 9 Personalized Picks")
             cols = st.columns(3)
             for i, (_, row) in enumerate(filtered.head(9).iterrows()):
                 with cols[i % 3]:
+                    if isinstance(row.get('poster_url'), str) and row['poster_url'].startswith('http'):
+                        st.image(row['poster_url'], use_container_width=True)
                     st.markdown(f"**{row['title']}**")
                     st.caption(f"{row['genres']} | {row['director']}")
-        else:
-            st.warning("Please select at least 5 movies and 3 genres.")
-
+    if st.button(" Start Over"):
+        reset()

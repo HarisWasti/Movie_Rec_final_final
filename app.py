@@ -90,7 +90,7 @@ def get_hybrid_recommendations(user_id, top_n=9, weight_content=0.6):
     return extra_values[extra_values['tmdbId'].isin(top_tmdb)].drop_duplicates('tmdbId')
 
 # --- Streamlit UI ---
-st.title(" Hybrid Movie Recommender")
+st.title("Hybrid Movie Recommender")
 
 if 'page' not in st.session_state:
     st.session_state.page = 'start'
@@ -126,7 +126,7 @@ if st.session_state.page == 'user_recs':
                 st.image(row['poster_url'], use_container_width=True)
             st.markdown(f"**{row['title']}**")
             st.caption(f"{row['genres']} | {row['director']}")
-    if st.button(" Go Back"):
+    if st.button("Go Back"):
         reset()
 
 # --- Cold Start Page ---
@@ -135,7 +135,7 @@ if st.session_state.page == 'cold_start':
     
     all_titles = extra_values['title'].dropna().unique().tolist()
     selected_movies = st.multiselect(
-        " Pick at least 1 movie you like (no limit on max):",
+        "Pick at least 1 movie you like (no limit on max):",
         sorted(all_titles)
     )
 
@@ -148,74 +148,47 @@ if st.session_state.page == 'cold_start':
         .unique()
         .tolist()
     )
-    selected_genres = st.multiselect(" Pick 3 genres you enjoy:", sorted(genres_list))
+    selected_genres = st.multiselect("Pick 3 genres you enjoy:", sorted(genres_list))
 
- if st.button("Recommend"):
-    if len(selected_movies) >= 1 and len(selected_genres) >= 3:
-        liked_tmdb_ids = extra_values[
-            extra_values['title'].isin(selected_movies)
-        ]['tmdbId'].tolist()
+    if st.button("Recommend"):
+        if len(selected_movies) >= 1 and len(selected_genres) >= 3:
+            liked_tmdb_ids = extra_values[
+                extra_values['title'].isin(selected_movies)
+            ]['tmdbId'].tolist()
 
-        liked_movie_ids = extra_values[
-            extra_values['title'].isin(selected_movies)
-        ]['movieId'].tolist()
+            liked_indices = [
+                tfidf_index.get(tmdb) for tmdb in liked_tmdb_ids if tmdb in tfidf_index
+            ]
 
-        # ------------------------------
-        # Collaborative Filtering (via pre-trained EASE)
-        # ------------------------------
-        cf_scores = np.zeros(len(ease_idx2item))
-        for movie_id in liked_movie_ids:
-            if movie_id in ease_item_map:
-                idx = ease_item_map[movie_id]
-                row = ease_B[idx].toarray().flatten() if sp.issparse(ease_B) else ease_B[idx]
-                cf_scores += row
+            tfidf_sim = np.zeros(tfidf_matrix.shape[0])
+            for idx in liked_indices:
+                if idx is not None:
+                    tfidf_sim += cosine_similarity(tfidf_matrix[idx], tfidf_matrix).flatten()
 
-        cf_scores = MinMaxScaler().fit_transform(cf_scores.reshape(1, -1)).flatten()
-        cf_score_map = {}
-        for idx, score in enumerate(cf_scores):
-            movie_id = ease_idx2item[idx]
-            tmdb_id = movieId_to_tmdbId.get(movie_id)
-            if tmdb_id:
-                cf_score_map[tmdb_id] = 0.4 * score  # weight for CF
+            if liked_indices:
+                tfidf_sim /= len(liked_indices)
 
-        # ------------------------------
-        # Content-Based (TF-IDF)
-        # ------------------------------
-        liked_indices = [tfidf_index.get(tmdb) for tmdb in liked_tmdb_ids if tmdb in tfidf_index]
-        tfidf_sim = np.zeros(tfidf_matrix.shape[0])
-        for idx in liked_indices:
-            if idx is not None:
-                tfidf_sim += cosine_similarity(tfidf_matrix[idx], tfidf_matrix).flatten()
-        if liked_indices:
-            tfidf_sim /= len(liked_indices)
+            # Genre boosting
+            extra_values['genre_match'] = extra_values['genres'].apply(
+                lambda g: any(genre in g.split('|') for genre in selected_genres)
+            )
+            extra_values['content_score'] = tfidf_sim + extra_values['genre_match'] * tfidf_sim * 0.1
 
-        extra_values['genre_match'] = extra_values['genres'].apply(
-            lambda g: any(genre in g.split('|') for genre in selected_genres)
-        )
+            # Remove already selected movies from recommendations
+            filtered = extra_values[
+                ~extra_values['tmdbId'].isin(liked_tmdb_ids)
+            ].sort_values('content_score', ascending=False).drop_duplicates('tmdbId')
 
-        final_scores = []
-        for i, row in extra_values.iterrows():
-            tmdb_id = row['tmdbId']
-            content_score = tfidf_sim[i] if i < len(tfidf_sim) else 0
-            genre_boost = content_score * 0.1 if row['genre_match'] else 0
-            cf_score = cf_score_map.get(tmdb_id, 0)
-            total_score = cf_score + 0.6 * content_score + genre_boost  # weights: 0.4 CF, 0.6 content
-            final_scores.append(total_score)
+            st.subheader("Top 9 Personalized Picks")
+            cols = st.columns(3)
+            for i, (_, row) in enumerate(filtered.head(9).iterrows()):
+                with cols[i % 3]:
+                    if isinstance(row.get('poster_url'), str) and row['poster_url'].startswith('http'):
+                        st.image(row['poster_url'], use_container_width=True)
+                    st.markdown(f"**{row['title']}**")
+                    st.caption(f"{row['genres']} | {row['director']}")
+        else:
+            st.warning("Please select at least 1 movie and 3 genres.")
 
-        extra_values['content_score'] = final_scores
-
-        # Exclude already liked
-        filtered = extra_values[
-            ~extra_values['tmdbId'].isin(liked_tmdb_ids)
-        ].sort_values('content_score', ascending=False).drop_duplicates('tmdbId')
-
-        st.subheader(" Top 9 Personalized Picks (Hybrid)")
-        cols = st.columns(3)
-        for i, (_, row) in enumerate(filtered.head(9).iterrows()):
-            with cols[i % 3]:
-                if isinstance(row.get('poster_url'), str) and row['poster_url'].startswith('http'):
-                    st.image(row['poster_url'], use_container_width=True)
-                st.markdown(f"**{row['title']}**")
-                st.caption(f"{row['genres']} | {row['director']}")
-    else:
-        st.warning("Please select at least 1 movie and 3 genres.")
+    if st.button("Start Over"):
+        reset()

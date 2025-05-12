@@ -155,7 +155,9 @@ if st.session_state.page == 'cold_start':
             )
             extra_values['content_score'] = tfidf_sim + extra_values['genre_match'] * 0.1 * tfidf_sim
 
-            filtered = extra_values.sort_values('content_score', ascending=False).drop_duplicates('tmdbId')
+            filtered = extra_values[
+                ~extra_values['tmdbId'].isin(liked_tmdb_ids) 
+            ].sort_values('content_score', ascending=False).drop_duplicates('tmdbId')
 
             st.subheader(" Top 9 Personalized Picks")
             cols = st.columns(3)

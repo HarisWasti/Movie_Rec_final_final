@@ -131,9 +131,12 @@ if st.session_state.page == 'cold_start':
 
             if liked_indices:
                 tfidf_sim /= len(liked_indices)
-            genre_mask = extra_values['genres'].apply(lambda g: any(genre in g for genre in selected_genres))
-            extra_values['content_score'] = tfidf_sim
-            filtered = extra_values[genre_mask].sort_values('content_score', ascending=False).drop_duplicates('tmdbId')
+            extra_values['genre_match'] = extra_values['genres'].apply(
+                lambda g: any(genre in g.split('|') for genre in selected_genres)
+            )
+            extra_values['content_score'] += extra_values['genre_match'] * extra_values['content_score'] * 0.1
+            filtered = extra_values.sort_values('content_score', ascending=False).drop_duplicates('tmdbId')
+
             st.subheader(" Top 9 Personalized Picks")
             cols = st.columns(3)
             for i, (_, row) in enumerate(filtered.head(9).iterrows()):

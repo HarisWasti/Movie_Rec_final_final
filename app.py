@@ -49,7 +49,9 @@ def get_hybrid_recommendations(user_id, top_n=9, weight_content=0.6):
             if tmdb_id:
                 scores[tmdb_id] = (1 - weight_content) * score
 
-    liked_tmdb_ids = extra_values[(extra_values['userId'] == user_id) & (extra_values['rating'] >= 4.0)]['tmdbId']
+    matched = extra_values[extra_values['title'].str.lower().isin([title.lower() for title in selected_movies])]
+    liked_tmdb_ids = matched['tmdbId'].tolist()
+
     liked_indices = [tfidf_index.get(tmdb_id) for tmdb_id in liked_tmdb_ids if tmdb_id in tfidf_index]
 
     tfidf_sim = np.zeros(tfidf_matrix.shape[0])
@@ -85,16 +87,13 @@ if st.session_state.page == 'start':
         user_ids = sorted(ease_user_map.keys())
         user_id_input = st.selectbox("Select your User ID:", user_ids)
 
-        if st.button("Get Recommendations") and user_id_input.isdigit():
-            user_id = int(user_id_input)
-            if user_id in ease_user_map:
-                st.session_state.page = 'user_recs'
-                st.session_state.user_id = user_id
-            else:
-                st.warning(" Invalid User ID")
+        if st.button("Get Recommendations"):
+            st.session_state.page = 'user_recs'
+            st.session_state.user_id = user_id_input
 
     elif mode == "No":
         st.session_state.page = 'cold_start'
+
 
 # --- Existing User Rec Page ---
 if st.session_state.page == 'user_recs':

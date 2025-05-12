@@ -7,6 +7,7 @@ import joblib
 import scipy.sparse as sp
 from sklearn.metrics.pairwise import cosine_similarity
 from sklearn.preprocessing import MinMaxScaler
+from rec import load_assets, get_hybrid_recommendations
 
 # --- Load resources ---
 @st.cache_resource
